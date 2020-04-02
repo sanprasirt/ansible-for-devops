@@ -1,5 +1,6 @@
 ---
 - hosts: all
+  become: yes
 
   vars_files:
     - vars.yml
@@ -14,38 +15,40 @@
 
   tasks:
     - name: Get software for apt repository management.
-      apt: "name={{ item }} state=present"
-      with_items:
-        - python-apt
-        - python-pycurl
+      apt:
+        state: present
+        name:
+          - python-apt
+          - python-pycurl
 
     - name: Add ondrej repository for later versions of PHP.
       apt_repository: repo='ppa:ondrej/php' update_cache=yes
 
     - name: "Install Apache, MySQL, PHP, and other dependencies."
-      apt: "name={{ item }} state=present"
-      with_items:
-        - git
-        - curl
-        - unzip
-        - sendmail
-        - apache2
-        - php7.1-common
-        - php7.1-cli
-        - php7.1-dev
-        - php7.1-gd
-        - php7.1-curl
-        - php7.1-json
-        - php7.1-opcache
-        - php7.1-xml
-        - php7.1-mbstring
-        - php7.1-pdo
-        - php7.1-mysql
-        - php-apcu
-        - libpcre3-dev
-        - libapache2-mod-php7.1
-        - python-mysqldb
-        - mysql-server
+      apt:
+        state: present
+        name:
+          - git
+          - curl
+          - unzip
+          - sendmail
+          - apache2
+          - php7.1-common
+          - php7.1-cli
+          - php7.1-dev
+          - php7.1-gd
+          - php7.1-curl
+          - php7.1-json
+          - php7.1-opcache
+          - php7.1-xml
+          - php7.1-mbstring
+          - php7.1-pdo
+          - php7.1-mysql
+          - php-apcu
+          - libpcre3-dev
+          - libapache2-mod-php7.1
+          - python-mysqldb
+          - mysql-server
 
     - name: Disable the firewall (since this is for local dev only).
       service: name=ufw state=stopped
@@ -90,9 +93,6 @@
         state: present
       notify: restart apache
 
-    - name: Remove the MySQL test database.
-      mysql_db: db=test state=absent
-
     - name: Create a MySQL database for Drupal.
       mysql_db: "db={{ domain }} state=present"
 
@@ -117,7 +117,7 @@
         creates=/usr/local/bin/composer
 
     - name: Move Composer into globally-accessible location.
-      shell: >
+      command: >
         mv /tmp/composer.phar /usr/local/bin/composer
         creates=/usr/local/bin/composer
 
@@ -128,7 +128,7 @@
         dest: /opt/drush
 
     - name: Install Drush dependencies with Composer.
-      shell: >
+      command: >
         /usr/local/bin/composer install
         chdir=/opt/drush
         creates=/opt/drush/vendor/autoload.php
@@ -141,15 +141,25 @@
 
     - name: Check out Drupal Core to the Apache docroot.
       git:
-        repo: http://git.drupal.org/project/drupal.git
+        repo: https://git.drupal.org/project/drupal.git
         version: "{{ drupal_core_version }}"
         dest: "{{ drupal_core_path }}"
+      register: git_checkout
+
+    - name: Ensure Drupal codebase is owned by www-data.
+      file:
+        path: "{{ drupal_core_path }}"
+        owner: www-data
+        group: www-data
+        recurse: true
+      when: git_checkout.changed | bool
 
     - name: Install Drupal dependencies with Composer.
-      shell: >
+      command: >
         /usr/local/bin/composer install
         chdir={{ drupal_core_path }}
         creates={{ drupal_core_path }}/vendor/autoload.php
+      become_user: www-data
 
     - name: Install Drupal.
       command: >
@@ -160,16 +170,4 @@
         --root={{ drupal_core_path }}
         creates={{ drupal_core_path }}/sites/default/settings.php
       notify: restart apache
-
-    # SEE: https://drupal.org/node/2121849#comment-8413637
-    - name: Set permissions properly on settings.php.
-      file:
-        path: "{{ drupal_core_path }}/sites/default/settings.php"
-        mode: 0744
-
-    - name: Set permissions properly on files directory.
-      file:
-        path: "{{ drupal_core_path }}/sites/default/files"
-        mode: 0777
-        state: directory
-        recurse: yes
+      become_user: www-data
